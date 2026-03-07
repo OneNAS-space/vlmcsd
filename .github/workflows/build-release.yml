@@ -204,7 +204,7 @@ jobs:
               echo "Cleaning old versions of $pkgname in $archdir"
               rm -f "custom-packages/25.12/$archdir/${pkgname}"*.ipk
               echo "Deploying $base to 25.12/$archdir/"
-              cp "$f" "custom-packages/25.12/$archdir/"
+              cp "$f" "custom-packages/25.12/$archdir/$standard_name"
             fi
           done
           echo "=== 24.10 Content ==="
