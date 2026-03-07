@@ -130,6 +130,14 @@ jobs:
             ls -laR bin/packages/ 2>/dev/null || echo "No packages directory"
           fi
 
+      - name: 📦 Prepare and Rename APK artifacts
+        run: |
+          # 仅处理 25.12 产生的 APK 文件
+          find bin/packages/ -name "*.apk" | while read -r f; do
+            # vlmcsd-2026.02.18.apk -> vlmcsd-2026.02.18-${{ matrix.target }}.apk
+            mv "$f" "${f%.apk}-${{ matrix.target }}.apk"
+          done
+
       - name: 📦 Upload artifact for ${{ matrix.target }}
         uses: actions/upload-artifact@v7
         with:
@@ -181,16 +189,17 @@ jobs:
 
           find ./release-assets -type f \( -name "*.ipk" -o -name "*.apk" \) | while read -r f; do
             base=$(basename "$f")
-            pkgname=$(echo "$base" | sed -E 's/^([^_]+)_.*$/\1/')
             archdir=$(echo "$f" | sed -E 's#.*/vlmcsd-([^/]+)-openwrt.*#\1#')
-            echo "Processing $pkgname for arch $archdir"
             if [[ "$base" == *.ipk ]]; then
+              pkgname=$(echo "$base" | sed -E 's/^([^_]+)_.*$/\1/')
               mkdir -p "custom-packages/24.10/$archdir"
               echo "Cleaning old versions of $pkgname in $archdir"
               rm -f "custom-packages/24.10/$archdir/${pkgname}"*.ipk
               echo "Deploying $base to 24.10/$archdir/"
               cp "$f" "custom-packages/24.10/$archdir/"
             elif [[ "$base" == *.apk ]]; then
+              standard_name=$(echo "$base" | sed "s/-$archdir//")
+              pkgname=$(echo "$standard_name" | cut -d- -f1)
               mkdir -p "custom-packages/25.12/$archdir"
               echo "Cleaning old versions of $pkgname in $archdir"
               rm -f "custom-packages/25.12/$archdir/${pkgname}"*.ipk
