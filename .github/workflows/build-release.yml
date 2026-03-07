@@ -10,13 +10,61 @@ on:
       - completed
 
 jobs:
-  build:
-    name: Build for ${{ matrix.version }} / ${{ matrix.target }}
+  check:
+    name: 1. Resolve & Fingerprint
     runs-on: ubuntu-latest
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, 'Update-PKG_MIRROR_HASH')) ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.name == 'Check And Calculate PKG_MIRROR_HASH')
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.name == 'Check And Calculate PKG_MIRROR_HASH')
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+      resolved_tag: ${{ steps.version.outputs.full_version }}
+      pkg_version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: 🧾 Checkout repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 🔎 Decide whether build is needed
+        id: decide
+        env:
+          COMMIT_MSG: ${{ github.event.workflow_run.head_commit.message }}
+        run: |
+          SHOULD_BUILD="true"
+          # 提取指纹 FP
+          FP=$(echo "$COMMIT_MSG" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
+          
+          if [ -n "$FP" ] && [ -f .last-fingerprint ]; then
+            LAST=$(cat .last-fingerprint)
+            if [ "$FP" = "$LAST" ]; then
+              echo "Fingerprint unchanged ($FP). Skipping."
+              SHOULD_BUILD="false"
+            fi
+          fi
+          echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
+
+      - name: 📦 Extract Version from Makefile
+        id: version
+        if: steps.decide.outputs.should_build == 'true'
+        run: |
+          # 提取版本号逻辑 (带 fallback)
+          V=$(grep -E '^PKG_VERSION *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
+          if [ -z "$V" ]; then
+            SD=$(grep -E '^PKG_SOURCE_DATE *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
+            SV=$(grep -E '^PKG_SOURCE_VERSION *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]' | cut -c1-8)
+            V="${SD//-/.}.${SV}"
+          fi
+          R=$(grep -E '^PKG_RELEASE *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
+          
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "full_version=$V-r$R" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: 2. Build (${{ matrix.target }} / ${{ matrix.version }})
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -27,47 +75,21 @@ jobs:
             target: aarch64_cortex-a53
           - version: openwrt-24.10
             target: arm_cortex-a7_neon-vfpv4
+          - version: openwrt-25.12
+            target: x86_64
+          - version: openwrt-25.12
+            target: aarch64_cortex-a53
+          - version: openwrt-25.12
+            target: arm_cortex-a7_neon-vfpv4
 
     steps:
       - name: 🧾 Checkout repo
         uses: actions/checkout@v6
 
-      - name: 🔎 Decide whether build is needed (fingerprint compare)
-        id: need
-        env:
-          COMMIT_MSG: ${{ github.event.workflow_run.head_commit.message }}
+      - name: 📛 Set Environment
         run: |
-          echo "Trigger commit message: $COMMIT_MSG"
-          FP=$(echo "$COMMIT_MSG" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
-          if [ -z "$FP" ]; then
-            echo "No FP found in commit message; default to build."
-            echo "need=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          if [ -f .last-fingerprint ]; then
-            LAST=$(cat .last-fingerprint)
-          else
-            LAST=""
-          fi
-          echo "Current FP: $FP"
-          echo "Last FP: $LAST"
-          if [ "$FP" = "$LAST" ]; then
-            echo "Fingerprint unchanged; skip build."
-            echo "need=false" >> $GITHUB_OUTPUT
-          else
-            echo "Fingerprint changed; proceed to build."
-            echo "need=true" >> $GITHUB_OUTPUT
-
-      - name: ⛔ Exit early if no build needed
-        if: steps.need.outputs.need == 'false'
-        run: |
-          echo "No build needed. Exiting."
-          exit 0
-
-      - name: 📛 Extract PKG_NAME from Makefile
-        run: |
-          PKG_NAME=$(grep -E '^PKG_NAME[:?]?=' Makefile | head -n1 | sed -E 's/PKG_NAME[:?]?= *//')
-          echo "PKG_NAME=$PKG_NAME" >> "$GITHUB_ENV"
+          echo "PKG_NAME=${{ github.event.repository.name }}" >> "$GITHUB_ENV"
+          echo "ARCH=${{ matrix.target }}-${{ matrix.version }}" >> "$GITHUB_ENV"
 
       - name: 🧰 Set up vlmcsd feed structure
         run: |
@@ -83,10 +105,6 @@ jobs:
             --exclude='README.md' \
             --exclude='SECURITY.md' \
             ./ feed/jackie264/${PKG_NAME}/
-          
-      - name: 🧮 Compute ARCH
-        run: |
-          echo "ARCH=${{ matrix.target }}-${{ matrix.version }}" >> "$GITHUB_ENV"
 
       - name: 🏗️ Build with OpenWrt SDK
         uses: openwrt/gh-action-sdk@v10
@@ -117,98 +135,82 @@ jobs:
         with:
           name: ${{ env.PKG_NAME }}-${{ matrix.target }}-${{ matrix.version }}
           path: |
-            bin/packages/*/jackie264/vlmcsd*.ipk
+            bin/packages/*/jackie264/${{ env.PKG_NAME }}*.ipk
+            bin/packages/*/jackie264/${{ env.PKG_NAME }}*.apk
           if-no-files-found: ignore
 
   release:
-    name: Release ${{ github.repository }}
-    needs: build
+    name: 3. Release & Deploy ${{ github.repository }}
+    needs: [check, build]
     runs-on: ubuntu-latest
 
     steps:
       - name: 🧾 Checkout repo
         uses: actions/checkout@v6
 
-      - name: 🔍 Extract version and release from Makefile
-        id: version
-        run: |
-          PKG_VERSION=$(grep -E '^PKG_VERSION *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
-          if [ -z "$PKG_VERSION" ]; then
-            PKG_SOURCE_DATE=$(grep -E '^PKG_SOURCE_DATE *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
-            PKG_SOURCE_VERSION=$(grep -E '^PKG_SOURCE_VERSION *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
-            PKG_VERSION="${PKG_SOURCE_DATE//-/.}.$(echo $PKG_SOURCE_VERSION | cut -c1-8)"
-          fi
-          PKG_RELEASE=$(grep -E '^PKG_RELEASE *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
-          COMBINED_VERSION="${PKG_VERSION}-${PKG_RELEASE}"
-          echo "📦 Version: $COMBINED_VERSION"
-          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
-          echo "full_version=$COMBINED_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: 🛑 Check if release already exists
-        id: check_release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG_NAME="v${{ steps.version.outputs.full_version }}"
-          echo "Checking for existing release tag: $TAG_NAME"
-          
-          if gh release view "$TAG_NAME" > /dev/null 2>&1; then
-            echo "✅ Release $TAG_NAME already exists."
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "🚀 Release $TAG_NAME does not exist. Proceeding with release."
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: ⬇️ Download all build artifacts
-        if: steps.check_release.outputs.exists == 'false'
         uses: actions/download-artifact@v8
         with:
           path: ./release-assets
 
       - name: 🗃️ Create GitHub Release
-        if: steps.check_release.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.full_version }}
-          name: Build-v${{ steps.version.outputs.version }}
+          tag_name: v${{ needs.check.outputs.resolved_tag }}
+          name: Build-v${{ needs.check.outputs.pkg_version }}
           files: |
-            ./release-assets/**/vlmcsd*.ipk
+            ./release-assets/**/*.ipk
+            ./release-assets/**/*.apk
           draft: false
           prerelease: false
           overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Checkout custom-packages repo
-        if: steps.check_release.outputs.exists == 'false'
+      - name: 🔑 Checkout custom-packages repo
         uses: actions/checkout@v6
         with:
           repository: OneNAS-space/custom-packages
           token: ${{ secrets.CUSTOM_PACKAGES_TOKEN }}
           path: custom-packages
 
-      - name: 📂 Copy artifacts into repo
-        if: steps.check_release.outputs.exists == 'false'
+      - name: 🚚 Update vlmcsd artifacts
         run: |
-          find ./release-assets -type f -name "vlmcsd*.ipk" | while read -r f; do
+          set -e
+          PKG_NAME="${{ github.event.repository.name }}"
+
+          find ./release-assets -type f \( -name "*.ipk" -o -name "*.apk" \) | while read -r f; do
             base=$(basename "$f")
             pkgname=$(echo "$base" | sed -E 's/^([^_]+)_.*$/\1/')
             archdir=$(echo "$f" | sed -E 's#.*/vlmcsd-([^/]+)-openwrt.*#\1#')
             echo "Processing $pkgname for arch $archdir"
-            mkdir -p custom-packages/$archdir
-            echo "Cleaning old versions of $pkgname in $archdir"
-            rm -f custom-packages/$archdir/${pkgname}_*.ipk
-            cp "$f" custom-packages/$archdir/
+            if [[ "$base" == *.ipk ]]; then
+              mkdir -p "custom-packages/24.10/$archdir"
+              echo "Cleaning old versions of $pkgname in $archdir"
+              rm -f "custom-packages/24.10/$archdir/${pkgname}"*.ipk
+              echo "Deploying $base to 24.10/$archdir/"
+              cp "$f" "custom-packages/24.10/$archdir/"
+            elif [[ "$base" == *.apk ]]; then
+              mkdir -p "custom-packages/25.12/$archdir"
+              echo "Cleaning old versions of $pkgname in $archdir"
+              rm -f "custom-packages/25.12/$archdir/${pkgname}"*.ipk
+              echo "Deploying $base to 25.12/$archdir/"
+              cp "$f" "custom-packages/25.12/$archdir/"
+            fi
           done
-          ls -laR custom-packages
+          echo "=== 24.10 Content ==="
+          ls -la custom-packages/24.10/$archdir/${PKG_NAME}* || echo "No IPKs found"
+          echo "=== 25.12 Content ==="
+          ls -la custom-packages/25.12/$archdir/${PKG_NAME}* || echo "No APKs found"
 
-      - name: Update pkg artifacts
-        if: steps.check_release.outputs.exists == 'false'
-        run: |
           cd custom-packages
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "Update to - v${{ steps.version.outputs.full_version }}" || echo "No changes"
-          git push
+          git add 24.10/$archdir 25.12/$archdir 2>/dev/null || true
+          git commit -m "Update $PKG_NAME to v${{ needs.check.outputs.resolved_tag }}" || exit 0
+          
+          for i in {1..5}; do
+            git pull --rebase origin main && \
+            git push origin main && break || \
+            (echo "Conflict detected, retrying in 5s..." && sleep 5)
+          done
