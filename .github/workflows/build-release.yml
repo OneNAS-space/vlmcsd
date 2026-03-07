@@ -192,25 +192,25 @@ jobs:
             archdir=$(echo "$f" | sed -E 's#.*/vlmcsd-([^/]+)-openwrt.*#\1#')
             if [[ "$base" == *.ipk ]]; then
               pkgname=$(echo "$base" | sed -E 's/^([^_]+)_.*$/\1/')
-              mkdir -p "custom-packages/24.10/$archdir"
+              dest_dir="custom-packages/24.10/$archdir"
+              mkdir -p "$dest_dir"
               echo "Cleaning old versions of $pkgname in $archdir"
-              rm -f "custom-packages/24.10/$archdir/${pkgname}"*.ipk
-              echo "Deploying $base to 24.10/$archdir/"
-              cp "$f" "custom-packages/24.10/$archdir/"
+              rm -f "$dest_dir/${pkgname}"*.ipk
+              cp "$f" "$dest_dir/"
+              echo "✅ [24.10] Deployed $base to $archdir"
+              ls -la "$dest_dir/${pkgname}"* || echo "No IPKs found"
             elif [[ "$base" == *.apk ]]; then
               standard_name=$(echo "$base" | sed "s/-$archdir//")
               pkgname=$(echo "$standard_name" | cut -d- -f1)
-              mkdir -p "custom-packages/25.12/$archdir"
+              dest_dir="custom-packages/25.12/$archdir"
+              mkdir -p "$dest_dir"
               echo "Cleaning old versions of $pkgname in $archdir"
-              rm -f "custom-packages/25.12/$archdir/${pkgname}"*.apk
-              echo "Deploying $base to 25.12/$archdir/"
-              cp "$f" "custom-packages/25.12/$archdir/$standard_name"
+              rm -f "$dest_dir/${pkgname}"*.apk
+              echo "✅ [25.12] Deployed $base as $standard_name to $archdir"
+              cp "$f" "$dest_dir/$standard_name"
+              ls -la "$dest_dir/${pkgname}"* || echo "No APKs found"
             fi
           done
-          echo "=== 24.10 Content ==="
-          ls -la custom-packages/24.10/$archdir/${PKG_NAME}* || echo "No IPKs found"
-          echo "=== 25.12 Content ==="
-          ls -la custom-packages/25.12/$archdir/${PKG_NAME}* || echo "No APKs found"
 
           cd custom-packages
           git config user.name "github-actions[bot]"
