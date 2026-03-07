@@ -202,7 +202,7 @@ jobs:
               pkgname=$(echo "$standard_name" | cut -d- -f1)
               mkdir -p "custom-packages/25.12/$archdir"
               echo "Cleaning old versions of $pkgname in $archdir"
-              rm -f "custom-packages/25.12/$archdir/${pkgname}"*.ipk
+              rm -f "custom-packages/25.12/$archdir/${pkgname}"*.apk
               echo "Deploying $base to 25.12/$archdir/"
               cp "$f" "custom-packages/25.12/$archdir/$standard_name"
             fi
