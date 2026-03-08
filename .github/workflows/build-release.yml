@@ -49,29 +49,28 @@ jobs:
         id: decide
         run: |
           SHOULD_BUILD="true"
-          V="${{ env.V_TEMP }}"
-          echo "Checking status for version: v$V"
-
-          # 1. 检查指纹 (仅当 FP 存在时执行)
-          MSG="${{ github.event.workflow_run.head_commit.message }}"
-          # 如果是手动触发，尝试获取当前 commit message
-          if [ -z "$MSG" ]; then MSG=$(git log -1 --pretty=%B); fi
           
+          # 获取带修订号的完整版本号 (例如 2026.02.18.9fc399b8-r1)
+          # 注意：这里我们直接用 version 步骤产出的 full_version
+          FULL_V="${{ steps.version.outputs.full_version }}"
+          echo "Checking status for full tag: v$FULL_V"
+          
+          # 1. 检查指纹 (保持现状)
+          MSG="${{ github.event.workflow_run.head_commit.message }}"
+          [ -z "$MSG" ] && MSG=$(git log -1 --pretty=%B)
           FP=$(echo "$MSG" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
           
           if [ -n "$FP" ] && [ -f .last-fingerprint ]; then
-            LAST_FP=$(cat .last-fingerprint)
-            if [ "$FP" = "$LAST_FP" ]; then
-              echo "✅ Fingerprint matches ($FP). Skipping."
+            if [ "$FP" = "$(cat .last-fingerprint)" ]; then
+              echo "✅ Fingerprint matches. Skipping."
               SHOULD_BUILD="false"
             fi
-          else
-            echo "ℹ️ No Fingerprint found in commit message, relying on Tag check."
           fi
           
-          # 2. 检查远程 Tag
-          if git ls-remote --tags origin | grep -q "refs/tags/v$V$"; then
-             echo "⚠️ Tag v$V already exists on remote repository. Skipping to prevent asset conflict."
+          # 2. 核心防线：检查远程是否已存在该完整的 Tag
+          # 使用 --exit-code 可以直接让 git 返回状态码，更高效
+          if git ls-remote --exit-code --tags origin "refs/tags/v$FULL_V" >/dev/null 2>&1; then
+             echo "⚠️ Tag v$FULL_V already exists. Skipping build."
              SHOULD_BUILD="false"
           fi
           
