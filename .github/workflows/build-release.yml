@@ -47,6 +47,8 @@ jobs:
 
       - name: 🔎 Decide whether build is needed
         id: decide
+        env:
+          HEAD_COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
         run: |
           SHOULD_BUILD="true"
           
@@ -56,7 +58,7 @@ jobs:
           echo "Checking status for full tag: v$FULL_V"
           
           # 1. 检查指纹 (保持现状)
-          MSG="${{ github.event.workflow_run.head_commit.message }}"
+          MSG="$HEAD_COMMIT_MESSAGE"
           [ -z "$MSG" ] && MSG=$(git log -1 --pretty=%B)
           FP=$(echo "$MSG" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
           
