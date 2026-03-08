@@ -43,6 +43,7 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "full_version=v$V-r$R" >> "$GITHUB_OUTPUT"
           echo "V_TEMP=$V" >> $GITHUB_ENV
+          echo "📦 Version: v$V-r$R"
 
       - name: 🔎 Decide whether build is needed
         id: decide
@@ -188,6 +189,7 @@ jobs:
           draft: false
           prerelease: false
           overwrite_files: true
+          overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
