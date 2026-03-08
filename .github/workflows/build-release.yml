@@ -195,7 +195,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.check.outputs.resolved_tag }}
-          TITLE: "Build -${{ needs.check.outputs.resolved_tag }}“
+          TITLE: "Build -${{ needs.check.outputs.resolved_tag }}"
         run: |
           gh release view "$TAG" || gh release create "$TAG" --title "$TAG" --notes ""
           echo "Uploading assets to $TAG..."
