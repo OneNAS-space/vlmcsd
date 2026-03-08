@@ -9,6 +9,10 @@ on:
     types:
       - completed
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+  
 jobs:
   check:
     name: 1. Resolve & Fingerprint
@@ -26,29 +30,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 🔎 Decide whether build is needed
-        id: decide
-        env:
-          COMMIT_MSG: ${{ github.event.workflow_run.head_commit.message }}
-        run: |
-          SHOULD_BUILD="true"
-          # 提取指纹 FP
-          FP=$(echo "$COMMIT_MSG" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
-          
-          if [ -n "$FP" ] && [ -f .last-fingerprint ]; then
-            LAST=$(cat .last-fingerprint)
-            if [ "$FP" = "$LAST" ]; then
-              echo "Fingerprint unchanged ($FP). Skipping."
-              SHOULD_BUILD="false"
-            fi
-          fi
-          echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
-
       - name: 📦 Extract Version from Makefile
         id: version
-        if: steps.decide.outputs.should_build == 'true'
+        # 必须先提取版本，下面的判断才能用 $V
         run: |
-          # 提取版本号逻辑 (带 fallback)
           V=$(grep -E '^PKG_VERSION *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
           if [ -z "$V" ]; then
             SD=$(grep -E '^PKG_SOURCE_DATE *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
@@ -56,9 +41,30 @@ jobs:
             V="${SD//-/.}.${SV}"
           fi
           R=$(grep -E '^PKG_RELEASE *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
-          
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "full_version=$V-r$R" >> "$GITHUB_OUTPUT"
+          echo "V_TEMP=$V" >> $GITHUB_ENV
+
+      - name: 🔎 Decide whether build is needed
+        id: decide
+        run: |
+          SHOULD_BUILD="true"
+          V="${{ env.V_TEMP }}"
+          
+          # 1. 检查指纹
+          FP=$(echo "${{ github.event.workflow_run.head_commit.message }}" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
+          if [ -f .last-fingerprint ] && [ "$(cat .last-fingerprint)" = "$FP" ]; then
+            echo "Fingerprint matches ($FP). Skipping."
+            SHOULD_BUILD="false"
+          fi
+          
+          # 2. 检查远程 Tag (基于刚才提取的 $V)
+          if git rev-parse "v$V" >/dev/null 2>&1; then
+             echo "Tag v$V already exists. Skipping build."
+             SHOULD_BUILD="false"
+          fi
+          
+          echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
 
   build:
     name: 2. Build (${{ matrix.target }} / ${{ matrix.version }})
@@ -223,3 +229,17 @@ jobs:
             git push origin main && break || \
             (echo "Conflict detected, retrying in 5s..." && sleep 5)
           done
+
+      - name: 📝 Update Fingerprint after success
+        if: success()
+        run: |
+          # 重新获取触发本次编译的 FP (从 commit msg 提取)
+          FP=$(echo "${{ github.event.workflow_run.head_commit.message }}" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
+          if [ -n "$FP" ]; then
+            echo "$FP" > .last-fingerprint
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add .last-fingerprint
+            git commit -m "chore: update fingerprint to $FP [skip ci]"
+            git push origin main
+          fi
