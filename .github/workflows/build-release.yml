@@ -178,18 +178,35 @@ jobs:
         with:
           path: ./release-assets
 
-      - name: 🗃️ Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.check.outputs.resolved_tag }}
-          name: Build-${{ needs.check.outputs.resolved_tag }}
-          files: |
-            ./release-assets/**/*.ipk
-            ./release-assets/**/*.apk
-          draft: false
-          prerelease: false
+#      - name: 🗃️ Create GitHub Release
+#        uses: softprops/action-gh-release@v2
+#        with:
+#          tag_name: ${{ needs.check.outputs.resolved_tag }}
+#          name: Build-${{ needs.check.outputs.resolved_tag }}
+#          files: |
+#            ./release-assets/**/*.ipk
+#            ./release-assets/**/*.apk
+#          draft: false
+#          prerelease: false
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 🚀 Robust Release (Native GH CLI)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.resolved_tag }}
+          TITLE: "Build -${{ needs.check.outputs.resolved_tag }}
+        run: |
+          # 1. 确保 Release 存在（如果不存在则创建）
+          gh release view "$TAG" || gh release create "$TAG" --title "$TAG" --notes ""
+
+          # 2. 串行上传并强制覆盖 (--clobber)
+          # 使用 find 找到所有 ipk 和 apk，确保串行处理规避竞态
+          find ./release-assets -type f \( -name "*.ipk" -o -name "*.apk" \) | while read -r file; do
+            echo "⬆️ Uploading $(basename "$file")..."
+            gh release upload "$TAG" "$file" --clobber
+          done
+          
+          echo "🎉 All assets uploaded successfully."
 
       - name: 🔑 Checkout custom-packages repo
         uses: actions/checkout@v6
