@@ -243,9 +243,11 @@ jobs:
 
       - name: 📝 Update Fingerprint after success
         if: success()
+        env:
+          HEAD_COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
         run: |
           # 重新获取触发本次编译的 FP (从 commit msg 提取)
-          FP=$(echo "${{ github.event.workflow_run.head_commit.message }}" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
+          FP=$(echo "$HEAD_COMMIT_MESSAGE" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
           if [ -n "$FP" ]; then
             echo "$FP" > .last-fingerprint
             git config user.name "github-actions[bot]"
