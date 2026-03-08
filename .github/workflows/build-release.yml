@@ -32,7 +32,6 @@ jobs:
 
       - name: 📦 Extract Version from Makefile
         id: version
-        # 必须先提取版本，下面的判断才能用 $V
         run: |
           V=$(grep -E '^PKG_VERSION *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
           if [ -z "$V" ]; then
@@ -42,7 +41,7 @@ jobs:
           fi
           R=$(grep -E '^PKG_RELEASE *:?=' Makefile | head -n1 | cut -d= -f2 | tr -d '[:space:]')
           echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "full_version=$V-r$R" >> "$GITHUB_OUTPUT"
+          echo "full_version=v$V-r$R" >> "$GITHUB_OUTPUT"
           echo "V_TEMP=$V" >> $GITHUB_ENV
 
       - name: 🔎 Decide whether build is needed
@@ -51,13 +50,15 @@ jobs:
           HEAD_COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
         run: |
           SHOULD_BUILD="true"
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "👋 Manual run detected. Forcing build."
+            echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           
-          # 获取带修订号的完整版本号 (例如 2026.02.18.9fc399b8-r1)
-          # 注意：这里我们直接用 version 步骤产出的 full_version
           FULL_V="${{ steps.version.outputs.full_version }}"
-          echo "Checking status for full tag: v$FULL_V"
+          echo "Checking status for full tag: $FULL_V"
           
-          # 1. 检查指纹 (保持现状)
           MSG="$HEAD_COMMIT_MESSAGE"
           [ -z "$MSG" ] && MSG=$(git log -1 --pretty=%B)
           FP=$(echo "$MSG" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
@@ -69,10 +70,8 @@ jobs:
             fi
           fi
           
-          # 2. 核心防线：检查远程是否已存在该完整的 Tag
-          # 使用 --exit-code 可以直接让 git 返回状态码，更高效
-          if git ls-remote --exit-code --tags origin "refs/tags/v$FULL_V" >/dev/null 2>&1; then
-             echo "⚠️ Tag v$FULL_V already exists. Skipping build."
+          if git ls-remote --exit-code --tags origin "refs/tags/$FULL_V" >/dev/null 2>&1; then
+             echo "⚠️ Tag $FULL_V already exists. Skipping build."
              SHOULD_BUILD="false"
           fi
           
@@ -151,9 +150,7 @@ jobs:
 
       - name: 📦 Prepare and Rename APK artifacts
         run: |
-          # 仅处理 25.12 产生的 APK 文件
           find bin/packages/ -name "*.apk" | while read -r f; do
-            # vlmcsd-2026.02.18.apk -> vlmcsd-2026.02.18-${{ matrix.target }}.apk
             mv "$f" "${f%.apk}-${{ matrix.target }}.apk"
           done
 
@@ -183,8 +180,8 @@ jobs:
       - name: 🗃️ Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.check.outputs.resolved_tag }}
-          name: Build-v${{ needs.check.outputs.pkg_version }}
+          tag_name: ${{ needs.check.outputs.resolved_tag }}
+          name: Build-${{ needs.check.outputs.resolved_tag }}
           files: |
             ./release-assets/**/*.ipk
             ./release-assets/**/*.apk
@@ -235,7 +232,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add 24.10/$archdir 25.12/$archdir 2>/dev/null || true
-          git commit -m "Update $PKG_NAME to v${{ needs.check.outputs.resolved_tag }}" || exit 0
+          git commit -m "Update $PKG_NAME to ${{ needs.check.outputs.resolved_tag }}" || exit 0
           
           for i in {1..5}; do
             git pull --rebase origin main && \
@@ -248,7 +245,6 @@ jobs:
         env:
           HEAD_COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
         run: |
-          # 重新获取触发本次编译的 FP (从 commit msg 提取)
           FP=$(echo "$HEAD_COMMIT_MESSAGE" | sed -n 's/.*FP=\([0-9a-f]\{64\}\).*/\1/p')
           if [ -n "$FP" ]; then
             echo "$FP" > .last-fingerprint
