@@ -188,8 +188,6 @@ jobs:
             ./release-assets/**/*.apk
           draft: false
           prerelease: false
-          overwrite_files: true
-          overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
