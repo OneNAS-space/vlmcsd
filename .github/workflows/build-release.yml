@@ -88,12 +88,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - version: openwrt-24.10
-            target: x86_64
-          - version: openwrt-24.10
-            target: aarch64_cortex-a53
-          - version: openwrt-24.10
-            target: arm_cortex-a7_neon-vfpv4
           - version: openwrt-25.12
             target: x86_64
           - version: openwrt-25.12
@@ -139,12 +133,12 @@ jobs:
       - name: 🔍 Debug build output
         run: |
           echo "=== Build directory structure ==="
-          find . -name "*.ipk" -type f 2>/dev/null || echo "No .ipk files found"
+          find . -name "*.apk" -type f 2>/dev/null || echo "No .apk files found"
           echo "=== bin directory structure ==="
           ls -la bin/ 2>/dev/null || echo "No bin directory found"
           if [ -d "bin/packages" ]; then
             echo "=== packages directory structure ==="
-            find bin/packages/ -type f -name "*.ipk" 2>/dev/null || echo "No .ipk files in packages directory"
+            find bin/packages/ -type f -name "*.apk" 2>/dev/null || echo "No .apk files in packages directory"
             echo "=== Full packages directory tree ==="
             ls -laR bin/packages/ 2>/dev/null || echo "No packages directory"
           fi
@@ -160,7 +154,6 @@ jobs:
         with:
           name: ${{ env.PKG_NAME }}-${{ matrix.target }}-${{ matrix.version }}
           path: |
-            bin/packages/*/jackie264/${{ env.PKG_NAME }}*.ipk
             bin/packages/*/jackie264/${{ env.PKG_NAME }}*.apk
           if-no-files-found: ignore
 
@@ -178,19 +171,6 @@ jobs:
         with:
           path: ./release-assets
 
-#      - name: 🗃️ Create GitHub Release
-#        uses: softprops/action-gh-release@v2
-#        with:
-#          tag_name: ${{ needs.check.outputs.resolved_tag }}
-#          name: Build-${{ needs.check.outputs.resolved_tag }}
-#          files: |
-#            ./release-assets/**/*.ipk
-#            ./release-assets/**/*.apk
-#          draft: false
-#          prerelease: false
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: 🚀 Robust Release (Native GH CLI)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -199,7 +179,7 @@ jobs:
         run: |
           gh release view "$TAG" || gh release create "$TAG" --title "$TAG" --notes ""
           echo "Uploading assets to $TAG..."
-          find ./release-assets -type f \( -name "*.ipk" -o -name "*.apk" \) | while read -r file; do
+          find ./release-assets -type f -name "*.apk" | while read -r file; do
             echo "⬆️ Uploading $(basename "$file")..."
             gh release upload "$TAG" "$file" --clobber
           done
@@ -217,29 +197,20 @@ jobs:
           set -e
           PKG_NAME="${{ github.event.repository.name }}"
 
-          find ./release-assets -type f \( -name "*.ipk" -o -name "*.apk" \) | while read -r f; do
+          find ./release-assets -type f -name "*.apk" | while read -r f; do
             base=$(basename "$f")
             archdir=$(echo "$f" | sed -E 's#.*/vlmcsd-([^/]+)-openwrt.*#\1#')
-            if [[ "$base" == *.ipk ]]; then
-              pkgname=$(echo "$base" | sed -E 's/^([^_]+)_.*$/\1/')
-              dest_dir="custom-packages/releases/packages-24.10/$archdir/packages"
-              mkdir -p "$dest_dir"
-              echo "Cleaning old versions of $pkgname in $archdir"
-              rm -f "$dest_dir/${pkgname}"*.ipk
-              cp "$f" "$dest_dir/"
-              echo "✅ [24.10] Deployed $base to $archdir"
-              ls -la "$dest_dir/${pkgname}"* || echo "No IPKs found"
-            elif [[ "$base" == *.apk ]]; then
-              standard_name=$(echo "$base" | sed "s/-$archdir//")
-              pkgname=$(echo "$standard_name" | cut -d- -f1)
-              dest_dir="custom-packages/releases/packages-25.12/$archdir/packages"
-              mkdir -p "$dest_dir"
-              echo "Cleaning old versions of $pkgname in $archdir"
-              rm -f "$dest_dir/${pkgname}"*.apk
-              echo "✅ [25.12] Deployed $base as $standard_name to $archdir"
-              cp "$f" "$dest_dir/$standard_name"
-              ls -la "$dest_dir/${pkgname}"* || echo "No APKs found"
-            fi
+            
+            standard_name=$(echo "$base" | sed "s/-$archdir//")
+            pkgname=$(echo "$standard_name" | cut -d- -f1)
+            dest_dir="custom-packages/releases/packages-25.12/$archdir/packages"
+            
+            mkdir -p "$dest_dir"
+            echo "Cleaning old versions of $pkgname in $archdir"
+            rm -f "$dest_dir/${pkgname}"*.apk
+            echo "✅ [25.12] Deployed $base as $standard_name to $archdir"
+            cp "$f" "$dest_dir/$standard_name"
+            ls -la "$dest_dir/${pkgname}"* || echo "No APKs found"
           done
 
           cd custom-packages
